@@ -14,32 +14,12 @@ const std::string CLIENT_ID("DataProcessorClient");
 const std::string MACHINE_ID("machine_01");
 const int DATA_INTERVAL = 10; // 30 minutos em segundos
 
-// Definição para alarmes
-enum class AlarmType {
-    Inactive,
-    Temperature,
-    Humidity
-};
-
 // Estrutura para armazenar dados dos sensores
 struct SensorData {
     float value;
     std::string timestamp;
     int missed_periods = 0;
 };
-
-// Função para obter o timestamp atual em formato ISO 8601
-std::string getCurrentTimestamp() {
-    std::cout << "getCurrentTimestamp()" << std::endl;
-    auto now = std::chrono::system_clock::now();
-    auto now_time_t = std::chrono::system_clock::to_time_t(now);
-    struct tm tm_info;
-    gmtime_r(&now_time_t, &tm_info);  // Converte para o formato UTC
-    
-    char buffer[100];
-    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm_info);  // Formato ISO 8601
-    return std::string(buffer);
-}
 
 // Classe para gerenciar alarmes
 class AlarmManager {
@@ -63,8 +43,10 @@ public:
 
     // Função para processar os dados de temperatura e umidade
     void processSensorData(const std::string& sensorId, float value, const std::string& timestamp) {
-        std::cout << "processSensorData() value: " << value<< " - " << sensorId << std::endl;
+        std::cout << "processSensorData()" << std::endl;
+        std::cout<< "sensor ID: " << sensorId << "-  value: " << value << std::endl;
         std::lock_guard<std::mutex> lock(dataMutex);
+        //std::string sensorId;
 
         // Verifica se o sensor já existe, caso contrário, cria um novo
         if (sensorDataMap.find(sensorId) == sensorDataMap.end()) {
@@ -113,43 +95,32 @@ public:
         
     }
 
-    // Função para processar a média móvel
-    float calculateMovingAverage(const std::string& sensorId, float newValue) {
-        std::cout << "calculateMovingAverage()" << std::endl;
-        static std::map<std::string, std::vector<float>> sensorValues;
-
-        // Adiciona o novo valor ao vetor de valores do sensor
-        sensorValues[sensorId].push_back(newValue);
-
-        // Limita o número de valores no vetor para calcular a média móvel
-        if (sensorValues[sensorId].size() > 5) {
-            sensorValues[sensorId].erase(sensorValues[sensorId].begin());
-        }
-
-        // Calcula a média
-        float sum = 0;
-        for (float val : sensorValues[sensorId]) {
-            sum += val;
-        }
-        
-        return sum / sensorValues[sensorId].size();
-        
-    }
 };
 
 // Função para processar os dados JSON recebidos
-void processIncomingMessage(const std::string& topic, const std::string& message, DataProcessor& processor) {
+void processIncomingMessage(std::string& topic, const std::string& message, DataProcessor& processor) {
     
     Json::CharReaderBuilder reader;
     Json::Value root;
     std::istringstream s(message);
     std::string errs;
+    std::string sensorId;
     std::cout<< "topic: " << topic << "- message: " << message << std::endl;
+    if(topic.find("sensor_temperature")!=std::string::npos){
+        sensorId = "sensor_temperature";
+        //std::cout << "sensor ID processIncoming1: " << sensorId << std::endl;
+    }
+    if(topic.find("sensor_humidity")!=std::string::npos){
+        sensorId = "sensor_humidity";
+        //std::cout << "sensor ID processIncoming2: " << sensorId << std::endl;
+    }
+    
     if (Json::parseFromStream(reader, s, &root, &errs)) {
-        std::string sensorId = root["sensor_id"].asString();
+        //std::cout << "anem id......"<< root["machine_id"].asString() << std::endl;
+        //std::string sensorId;
         float value = root["value"].asFloat();
         std::string timestamp = root["timestamp"].asString();
-        std::cout << "processIncomingMessage() - " << sensorId<< std::endl;
+        //std::cout << "processIncomingMessage() - " << sensorId<< std::endl;
         // Processa os dados do sensor
         processor.processSensorData(sensorId, value, timestamp);
     } else {
@@ -178,22 +149,6 @@ public:
         //std::cout <<"topic: "<< topic << std::endl;
         std::string payload = msg->get_payload_str();
         processIncomingMessage(topic, payload, processor);   
-    }
-
-    // Removido o 'override' para evitar o erro de não sobrecarga correta
-    void connected(const std::string& cause) {
-        std::cout << "Connected to MQTT broker" << std::endl;
-        
-    }
-
-    // Removido o 'override' para evitar o erro
-    void disconnected(const std::string& cause) {
-        std::cout << "Disconnected from MQTT broker" << std::endl;
-    }
-
-    // Removido o 'override' para evitar o erro
-    void delivery_complete(mqtt::delivery_token_ptr tok) {
-        std::cout << "Delivery complete" << std::endl;
     }
 };
 
