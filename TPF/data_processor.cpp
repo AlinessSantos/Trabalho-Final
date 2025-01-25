@@ -63,7 +63,7 @@ public:
 
     // Função para processar os dados de temperatura e umidade
     void processSensorData(const std::string& sensorId, float value, const std::string& timestamp) {
-        std::cout << "processSensorData()" << std::endl;
+        std::cout << "processSensorData() value: " << value<< " - " << sensorId << std::endl;
         std::lock_guard<std::mutex> lock(dataMutex);
 
         // Verifica se o sensor já existe, caso contrário, cria um novo
@@ -73,14 +73,13 @@ public:
         }
 
         SensorData& data = sensorDataMap[sensorId];
-        
         // Verifica se o valor do sensor está dentro da faixa ideal
         if (sensorId == "sensor_temperature") {
-            if (value < 20.0f || value > 30.0f) {
+            if (value > 20.0f && value < 40.0f) {
                 alarmManager.generateAlarm(MACHINE_ID + ".alarms.temperature");
             }
         } else if (sensorId == "sensor_humidity") {
-            if (value < 40.0f || value > 80.0f) {
+            if (value > 40.0f && value < 80.0f) {
                 alarmManager.generateAlarm(MACHINE_ID + ".alarms.humidity");
             }
         }
@@ -140,17 +139,17 @@ public:
 
 // Função para processar os dados JSON recebidos
 void processIncomingMessage(const std::string& topic, const std::string& message, DataProcessor& processor) {
-    std::cout << "processIncomingMessage()" << std::endl;
+    
     Json::CharReaderBuilder reader;
     Json::Value root;
     std::istringstream s(message);
     std::string errs;
-
+    std::cout<< "topic: " << topic << "- message: " << message << std::endl;
     if (Json::parseFromStream(reader, s, &root, &errs)) {
         std::string sensorId = root["sensor_id"].asString();
         float value = root["value"].asFloat();
         std::string timestamp = root["timestamp"].asString();
-
+        std::cout << "processIncomingMessage() - " << sensorId<< std::endl;
         // Processa os dados do sensor
         processor.processSensorData(sensorId, value, timestamp);
     } else {
@@ -176,6 +175,7 @@ public:
     void message_arrived(mqtt::const_message_ptr msg) {
         std::cout << "message_arrived()" << std::endl;
         std::string topic = msg->get_topic();
+        //std::cout <<"topic: "<< topic << std::endl;
         std::string payload = msg->get_payload_str();
         processIncomingMessage(topic, payload, processor);   
     }

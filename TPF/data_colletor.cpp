@@ -59,7 +59,7 @@ std::string getWeatherData(const std::string& apiKey, const std::string& city, c
 
     curl_global_cleanup();
     //testa readBUFFER
-    std::cout << readBuffer << std::endl;
+    //std::cout << readBuffer << std::endl;
     return readBuffer;
 }
 
@@ -99,7 +99,7 @@ void publishInitialMessage(mqtt::async_client& client) {
     Json::StreamWriterBuilder writer;
     std::string message = Json::writeString(writer, root);
     //testa mensagem inicial
-    //std::cout << message << std::endl;
+    std::cout << message << std::endl;
     mqtt::message_ptr msg = mqtt::make_message("/sensor_monitors", message);
     client.publish(msg)->wait_for(std::chrono::seconds(10));
 }
@@ -139,7 +139,7 @@ int main(int argc, char* argv[]) {
             std::string tempMessage = Json::writeString(writer, tempMsg);
             std::string humMessage = Json::writeString(writer, humMsg);
             //testa impressao
-            //::cout << "temp: " << tempMessage << std::endl << "umidade: " << humMessage << std::endl; 
+            std::cout << "temp: " << tempMessage << std::endl << "umidade: " << humMessage << std::endl; 
             // Publicando as mensagens no MQTT
             client.publish(mqtt::make_message("/sensors/" + MACHINE_ID + "/" + SENSOR_ID_TEMPERATURE, tempMessage))->wait_for(std::chrono::seconds(10));
             client.publish(mqtt::make_message("/sensors/" + MACHINE_ID + "/" + SENSOR_ID_HUMIDITY, humMessage))->wait_for(std::chrono::seconds(10));
