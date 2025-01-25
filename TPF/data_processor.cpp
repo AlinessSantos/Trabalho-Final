@@ -176,7 +176,7 @@ public:
             data.missed_periods++;
 
             // Se o sensor estiver inativo por 10 períodos, gerar alarme
-            if (data.missed_periods >= 10) {
+            if (data.missed_periods >= 2) {
                 alarmManager.generateAlarm(MACHINE_ID + ".alarms.inactive");
                 insertAlarm(MACHINE_ID, "inactive", data.timestamp);
             }
