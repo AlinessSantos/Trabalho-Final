@@ -29,7 +29,7 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     ((std::string*)userp)->append((char*)contents, size * nmemb);
     return size * nmemb;
 }
-
+//teste commit
 // Função para pegar os dados da API OpenWeatherMap
 std::string getWeatherData(const std::string& apiKey, const std::string& city, const std::string& country) {
     CURL* curl;
