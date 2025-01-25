@@ -1,120 +1,229 @@
 #include <iostream>
-#include <fstream>
-#include <map>
-#include <set>
+#include <string>
+#include <mqtt/async_client.h>
+#include <jsoncpp/json/json.h>
 #include <chrono>
 #include <thread>
+#include <map>
+#include <mutex>
 #include <ctime>
-#include <jsoncpp/json/json.h>
-#include <mqtt/async_client.h>
 #include <iomanip>
 
-#define QOS 1
-#define BROKER_ADDRESS "tcp://localhost:1883"
-#define GRAPHITE_HOST "graphite"
-#define GRAPHITE_PORT 2003
-#define INACTIVITY_LIMIT 10 // Limite de inatividade em períodos
+const std::string SERVER_ADDRESS("tcp://localhost:1883");
+const std::string CLIENT_ID("DataProcessorClient");
+const std::string MACHINE_ID("machine_01");
+const int DATA_INTERVAL = 10; // 30 minutos em segundos
 
-using namespace std;
+// Definição para alarmes
+enum class AlarmType {
+    Inactive,
+    Temperature,
+    Humidity
+};
 
-// Estruturas para armazenar os dados e os últimos timestamps
-std::map<std::string, std::string> last_timestamps;
-std::set<std::string> active_sensors;
+// Estrutura para armazenar dados dos sensores
+struct SensorData {
+    float value;
+    std::string timestamp;
+    int missed_periods = 0;
+};
 
-void post_metric(const std::string& metric_path, const std::string& timestamp_str, float value) {
-    std::ofstream graphite_stream;
-    graphite_stream.open("/dev/null", std::ios::app); // Ajustar para Graphite real
-    if (graphite_stream.is_open()) {
-        graphite_stream << metric_path << " " << value << " " << timestamp_str << std::endl;
-        graphite_stream.close();
-    } else {
-        std::cerr << "Error: Unable to connect to Graphite." << std::endl;
-    }
-}
-
-std::vector<std::string> split(const std::string &str, char delim) {
-    std::vector<std::string> tokens;
-    std::string token;
-    std::istringstream tokenStream(str);
-    while (std::getline(tokenStream, token, delim)) {
-        tokens.push_back(token);
-    }
-    return tokens;
-}
-
-bool is_outlier(float value, float lower, float upper) {
-    return (value < lower || value > upper);
-}
-
-void check_inactivity() {
+// Função para obter o timestamp atual em formato ISO 8601
+std::string getCurrentTimestamp() {
+    std::cout << "getCurrentTimestamp()" << std::endl;
     auto now = std::chrono::system_clock::now();
     auto now_time_t = std::chrono::system_clock::to_time_t(now);
-
-    for (const auto& sensor : active_sensors) {
-        auto last_time = std::chrono::system_clock::from_time_t(std::stol(last_timestamps[sensor]));
-        auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - last_time).count();
-
-        if (duration > INACTIVITY_LIMIT * 10) {
-            std::string metric_path = sensor + ".alarms.inactive";
-            post_metric(metric_path, std::to_string(now_time_t), 1);
-            std::cout << "Alarme de inatividade disparado para " << sensor << std::endl;
-        }
-    }
+    struct tm tm_info;
+    gmtime_r(&now_time_t, &tm_info);  // Converte para o formato UTC
+    
+    char buffer[100];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm_info);  // Formato ISO 8601
+    return std::string(buffer);
 }
 
-int main(int argc, char* argv[]) {
-    std::string clientId = "DataProcessorClient";
-    mqtt::async_client client(BROKER_ADDRESS, clientId);
+// Classe para gerenciar alarmes
+class AlarmManager {
+public:
+    void generateAlarm(const std::string& alarmMessage) {
+        std::cout << "ALARM: " << alarmMessage << std::endl;
+        // Persistir no banco de dados (simulação)
+    }
+};
 
-    class callback : public virtual mqtt::callback {
-    public:
-        void message_arrived(mqtt::const_message_ptr msg) override {
-            json::JSON payload = json::JSON::Load(msg->get_payload());
-            std::string topic = msg->get_topic();
-            auto topic_parts = split(topic, '/');
+// Processamento de dados dos sensores
+class DataProcessor {
+private:
+    mqtt::async_client& client;
+    std::map<std::string, SensorData> sensorDataMap;
+    AlarmManager alarmManager;
+    std::mutex dataMutex;
 
-            std::string machine_id = topic_parts[2];
-            std::string sensor_id = topic_parts[3];
-            std::string full_sensor_id = machine_id + "." + sensor_id;
+public:
+    DataProcessor(mqtt::async_client& mqttClient) : client(mqttClient) {}
 
-            active_sensors.insert(full_sensor_id);
-            last_timestamps[full_sensor_id] = payload["timestamp"].ToString();
+    // Função para processar os dados de temperatura e umidade
+    void processSensorData(const std::string& sensorId, float value, const std::string& timestamp) {
+        std::cout << "processSensorData()" << std::endl;
+        std::lock_guard<std::mutex> lock(dataMutex);
 
-            float value = payload["value"].ToFloat();
-            post_metric(full_sensor_id + ".data", payload["timestamp"].ToString(), value);
+        // Verifica se o sensor já existe, caso contrário, cria um novo
+        if (sensorDataMap.find(sensorId) == sensorDataMap.end()) {
+            sensorDataMap[sensorId] = {value, timestamp};
+            return;
+        }
 
-            // Verificação de alarmes
-            if (sensor_id == "sensor_temperature" && is_outlier(value, 19.0, 32.0)) {
-                post_metric(machine_id + ".alarms.temperature_outlier", payload["timestamp"].ToString(), value);
-                std::cout << "Alarme de temperatura disparado." << std::endl;
+        SensorData& data = sensorDataMap[sensorId];
+        
+        // Verifica se o valor do sensor está dentro da faixa ideal
+        if (sensorId == "sensor_temperature") {
+            if (value < 20.0f || value > 30.0f) {
+                alarmManager.generateAlarm(MACHINE_ID + ".alarms.temperature");
             }
-
-            if (sensor_id == "sensor_humidity" && is_outlier(value, 40.0, 80.0)) {
-                post_metric(machine_id + ".alarms.humidity_outlier", payload["timestamp"].ToString(), value);
-                std::cout << "Alarme de umidade disparado." << std::endl;
+        } else if (sensorId == "sensor_humidity") {
+            if (value < 40.0f || value > 80.0f) {
+                alarmManager.generateAlarm(MACHINE_ID + ".alarms.humidity");
             }
         }
-    };
 
-    callback cb;
-    client.set_callback(cb);
+        // Atualiza os dados do sensor
+        data.value = value;
+        data.timestamp = timestamp;
+        data.missed_periods = 0;  // Reset missed periods ao receber novo dado
 
+        // Processamento de inatividade
+        if (data.missed_periods >= 10) {
+            alarmManager.generateAlarm(MACHINE_ID + ".alarms.inactive");
+        }
+        
+    }
+
+    // Função para verificar sensores inativos
+    void checkInactiveSensors() {
+        std::cout << "checkInactiveSensors()" << std::endl;
+        std::lock_guard<std::mutex> lock(dataMutex);
+
+        for (auto& entry : sensorDataMap) {
+            SensorData& data = entry.second;
+            data.missed_periods++;
+
+            // Se o sensor estiver inativo por 10 períodos, gerar alarme
+            if (data.missed_periods >= 10) {
+                alarmManager.generateAlarm(MACHINE_ID + ".alarms.inactive");
+            }
+        }
+        
+    }
+
+    // Função para processar a média móvel
+    float calculateMovingAverage(const std::string& sensorId, float newValue) {
+        std::cout << "calculateMovingAverage()" << std::endl;
+        static std::map<std::string, std::vector<float>> sensorValues;
+
+        // Adiciona o novo valor ao vetor de valores do sensor
+        sensorValues[sensorId].push_back(newValue);
+
+        // Limita o número de valores no vetor para calcular a média móvel
+        if (sensorValues[sensorId].size() > 5) {
+            sensorValues[sensorId].erase(sensorValues[sensorId].begin());
+        }
+
+        // Calcula a média
+        float sum = 0;
+        for (float val : sensorValues[sensorId]) {
+            sum += val;
+        }
+        
+        return sum / sensorValues[sensorId].size();
+        
+    }
+};
+
+// Função para processar os dados JSON recebidos
+void processIncomingMessage(const std::string& topic, const std::string& message, DataProcessor& processor) {
+    std::cout << "processIncomingMessage()" << std::endl;
+    Json::CharReaderBuilder reader;
+    Json::Value root;
+    std::istringstream s(message);
+    std::string errs;
+
+    if (Json::parseFromStream(reader, s, &root, &errs)) {
+        std::string sensorId = root["sensor_id"].asString();
+        float value = root["value"].asFloat();
+        std::string timestamp = root["timestamp"].asString();
+
+        // Processa os dados do sensor
+        processor.processSensorData(sensorId, value, timestamp);
+    } else {
+        std::cerr << "Error parsing JSON: " << errs << std::endl;
+    }
+    
+}
+
+// Função para processar os alarmes
+void processAlarms(DataProcessor& processor) {
+    std::cout << "processAlarms()" << std::endl;
+    processor.checkInactiveSensors();
+}
+
+// Classe que implementa a interface mqtt::callback
+class CallbackHandler : public mqtt::callback {
+private:
+    DataProcessor& processor;
+
+public:
+    CallbackHandler(DataProcessor& proc) : processor(proc) {}
+
+    void message_arrived(mqtt::const_message_ptr msg) {
+        std::cout << "message_arrived()" << std::endl;
+        std::string topic = msg->get_topic();
+        std::string payload = msg->get_payload_str();
+        processIncomingMessage(topic, payload, processor);   
+    }
+
+    // Removido o 'override' para evitar o erro de não sobrecarga correta
+    void connected(const std::string& cause) {
+        std::cout << "Connected to MQTT broker" << std::endl;
+        
+    }
+
+    // Removido o 'override' para evitar o erro
+    void disconnected(const std::string& cause) {
+        std::cout << "Disconnected from MQTT broker" << std::endl;
+    }
+
+    // Removido o 'override' para evitar o erro
+    void delivery_complete(mqtt::delivery_token_ptr tok) {
+        std::cout << "Delivery complete" << std::endl;
+    }
+};
+
+int main(int argc, char* argv[]) {
+    mqtt::async_client client(SERVER_ADDRESS, CLIENT_ID);
     mqtt::connect_options connOpts;
-    connOpts.set_keep_alive_interval(20);
-    connOpts.set_clean_session(true);
+    mqtt::token_ptr conntok = client.connect(connOpts);
+    conntok->wait();
+    std::cout << "conectou" << std::endl;
+    DataProcessor processor(client);
 
-    try {
-        client.connect(connOpts);
-        client.subscribe("/sensors/#", QOS);
-    } catch (mqtt::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return EXIT_FAILURE;
-    }
+    // Instanciando o callback handler
+    CallbackHandler callbackHandler(processor);
 
+    // Definindo o callback do cliente
+    client.set_callback(callbackHandler);
+
+    // Inscrevendo-se nos tópicos
+    client.subscribe("/sensor_monitors", 1)->wait();
+    client.subscribe("/sensors/" + MACHINE_ID + "/sensor_temperature", 1)->wait();
+    client.subscribe("/sensors/" + MACHINE_ID + "/sensor_humidity", 1)->wait();
+
+    // Loop para verificar sensores inativos e alarmes
     while (true) {
-        check_inactivity();
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        processAlarms(processor);
+        std::this_thread::sleep_for(std::chrono::seconds(DATA_INTERVAL));
     }
 
-    return EXIT_SUCCESS;
+    // Desconectando
+    client.disconnect()->wait();
+
+    return 0;
 }
